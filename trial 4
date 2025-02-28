@@ -1,0 +1,158 @@
+import numpy as np
+from scipy.optimize import minimize
+import matplotlib.pyplot as plt
+from scipy.stats import qmc
+from joblib import Parallel, delayed
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+import seaborn as sns
+
+# Define the ranges for C and R
+C_range = (375, 425)
+R_range = (75, 85)
+
+# Define the total cost function T
+def total_cost(x):
+    C, R = x
+    a, b, c, d, e, f = 0.01, 0.02, 0.015, -5, -3, 1000
+    return a*C**2 + b*R**2 + c*C*R + d*C + e*R + f
+
+# Calculate the true minimum analytically
+def true_minimum():
+    a, b, c, d, e = 0.01, 0.02, 0.015, -5, -3
+    C_min = -d / (2 * a)
+    R_min = -e / (2 * b)
+    T_min = total_cost([C_min, R_min])
+    return C_min, R_min, T_min
+
+# Generate sample data points using Latin Hypercube Sampling
+def generate_samples(n_samples):
+    sampler = qmc.LatinHypercube(d=2)  # 2 dimensions: C and R
+    sample = sampler.random(n=n_samples)
+    C_samples = C_range[0] + (C_range[1] - C_range[0]) * sample[:, 0]
+    R_samples = R_range[0] + (R_range[1] - R_range[0]) * sample[:, 1]
+    return C_samples, R_samples
+
+# Evaluate the cost at sampled points
+def evaluate_samples(C_samples, R_samples):
+    T_values = np.array([total_cost([C, R]) for C, R in zip(C_samples, R_samples)])
+    return T_values
+
+# Function to optimize for a given initial guess
+def optimize_from_initial_guess(initial_guess):
+    constraints = [
+        {'type': 'ineq', 'fun': lambda x: x[0] - C_range[0]},  # C >= 375
+        {'type': 'ineq', 'fun': lambda x: C_range[1] - x[0]},  # C <= 425
+        {'type': 'ineq', 'fun': lambda x: x[1] - R_range[0]},  # R >= 75
+        {'type': 'ineq', 'fun': lambda x: R_range[1] - x[1]}   # R <= 85
+    ]
+    return minimize(total_cost, initial_guess, method='SLSQP', constraints=constraints)
+
+# Descriptive statistics
+def descriptive_statistics(C_samples, R_samples, T_values):
+    print("\nDescriptive Statistics:")
+    print(f"Mean Cost (C): {np.mean(C_samples):.2f}, Std Dev: {np.std(C_samples):.2f}")
+    print(f"Mean Risk (R): {np.mean(R_samples):.2f}, Std Dev: {np.std(R_samples):.2f}")
+    print(f"Mean Total Cost (T): {np.mean(T_values):.2f}, Std Dev: {np.std(T_values):.2f}")
+
+# Correlation analysis
+def correlation_analysis(C_samples, R_samples, T_values):
+    data = np.vstack((C_samples, R_samples, T_values)).T
+    correlation_matrix = np.corrcoef(data, rowvar=False)
+    print("\nCorrelation Matrix:")
+    print(correlation_matrix)
+
+    # Visualize the correlation matrix
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(correlation_matrix, annot=True, fmt=".2f", cmap='coolwarm', 
+                 xticklabels=['C', 'R', 'T'], yticklabels=['C', 'R', 'T'])
+    plt.title('Correlation Matrix')
+    plt.show()
+
+# Fit a surrogate model
+def fit_surrogate_model(C_samples, R_samples, T_values):
+    X = np.vstack((C_samples, R_samples)).T
+    poly = PolynomialFeatures(degree=2)
+    X_poly = poly.fit_transform(X)
+    
+    model = LinearRegression()
+    model.fit(X_poly, T_values)
+    
+    return model, poly
+
+# Sensitivity analysis
+def sensitivity_analysis(model, poly, C_range, R_range):
+    C_values = np.linspace(C_range[0], C_range[1], 100)
+    R_values = np.linspace(R_range[0], R_range[1], 100)
+    
+    # Sensitivity for C
+    T_C_sensitivity = []
+    for C in C_values:
+        R_fixed = (R_range[0] + R_range[1]) / 2  # Fix R at its midpoint
+        T_C_sensitivity.append(model.predict(poly.transform([[C, R_fixed]]))[0])
+    
+    # Sensitivity for R
+    T_R_sensitivity = []
+    for R in R_values:
+        C_fixed = (C_range[0] + C_range[1]) / 2  # Fix C at its midpoint
+        T_R_sensitivity.append(model.predict(poly.transform([[C_fixed, R]]))[0])
+    
+    # Plotting sensitivity analysis
+    plt.figure(figsize=(12, 6))
+    plt.subplot(1, 2, 1)
+    plt.plot(C_values, T_C_sensitivity, label='Sensitivity to C')
+    plt.xlabel('Cost (C)')
+    plt.ylabel('Total Cost (T)')
+    plt.title('Sensitivity Analysis: Varying C')
+    plt.grid(True)
+    
+    plt.subplot(1, 2, 2)
+    plt.plot(R_values, T_R_sensitivity, label='Sensitivity to R', color='orange')
+    plt.xlabel('Risk (R)')
+    plt.ylabel('Total Cost (T)')
+    plt.title('Sensitivity Analysis: Varying R')
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.show()
+
+# 3D surface plot
+def plot_3d_surface(C_samples, R_samples, T_values):
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(C_samples, R_samples, T_values, c='r', marker='o', label='Sampled Points')
+    
+    # Create a grid for the surface plot
+    C_grid = np.linspace(C_range[0], C_range[1], 100)
+    R_grid = np.linspace(R_range[0], R_range[1], 100)
+    C_mesh, R_mesh = np.meshgrid(C_grid, R_grid)
+    T_mesh = np.array([total_cost([C, R]) for C, R in zip(C_mesh.ravel(), R_mesh.ravel())]).reshape(C_mesh.shape)
+    
+    ax.plot_surface(C_mesh, R_mesh, T_mesh, alpha=0.5, cmap='viridis')
+    ax.set_xlabel('Cost (C)')
+    ax.set_ylabel('Risk (R)')
+    ax.set_zlabel('Total Cost (T)')
+    ax.set_title('3D Surface Plot of Total Cost')
+    plt.show()
+
+# Main execution
+n_samples = 100
+C_samples, R_samples = generate_samples(n_samples)
+T_values = evaluate_samples(C_samples, R_samples)
+
+# Perform analysis
+descriptive_statistics(C_samples, R_samples, T_values)
+correlation_analysis(C_samples, R_samples, T_values)
+
+# Fit surrogate model
+surrogate_model, poly = fit_surrogate_model(C_samples, R_samples, T_values)
+
+# Perform sensitivity analysis
+sensitivity_analysis(surrogate_model, poly, C_range, R_range)
+
+# Plot 3D surface
+plot_3d_surface(C_samples, R_samples, T_values)
+
+# Print true minimum
+C_min, R_min, T_min = true_minimum()
+print(f"True Minimum: C = {C_min:.2f}, R = {R_min:.2f}, T = {T_min:.2f}")

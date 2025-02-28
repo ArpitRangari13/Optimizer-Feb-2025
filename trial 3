@@ -1,0 +1,92 @@
+import numpy as np
+from scipy.optimize import minimize
+import matplotlib.pyplot as plt
+from scipy.stats import qmc
+from joblib import Parallel, delayed
+
+# Define the ranges for C and R
+C_range = (375, 425)
+R_range = (75, 85)
+
+# Define the total cost function T
+def total_cost(x):
+    C, R = x
+    a, b, c, d, e, f = 0.01, 0.02, 0.015, -5, -3, 1000
+    return a*C**2 + b*R**2 + c*C*R + d*C + e*R + f
+
+# Calculate the true minimum analytically
+def true_minimum():
+    a, b, c, d, e = 0.01, 0.02, 0.015, -5, -3
+    C_min = -d / (2 * a)
+    R_min = -e / (2 * b)
+    T_min = total_cost([C_min, R_min])
+    return C_min, R_min, T_min
+
+# Generate sample data points using Latin Hypercube Sampling
+def generate_samples(n_samples):
+    sampler = qmc.LatinHypercube(d=2)  # 2 dimensions: C and R
+    sample = sampler.random(n=n_samples)
+    C_samples = C_range[0] + (C_range[1] - C_range[0]) * sample[:, 0]
+    R_samples = R_range[0] + (R_range[1] - R_range[0]) * sample[:, 1]
+    return C_samples, R_samples
+
+# Evaluate the cost at sampled points
+def evaluate_samples(C_samples, R_samples):
+    T_values = np.array([total_cost([C, R]) for C, R in zip(C_samples, R_samples)])
+    return T_values
+
+# Function to optimize for a given initial guess
+def optimize_from_initial_guess(initial_guess):
+    constraints = [
+        {'type': 'ineq', 'fun': lambda x: x[0] - C_range[0]},  # C >= 375
+        {'type': 'ineq', 'fun': lambda x: C_range[1] - x[0]},  # C <= 425
+        {'type': 'ineq', 'fun': lambda x: x[1] - R_range[0]},  # R >= 75
+        {'type': 'ineq', 'fun': lambda x: R_range[1] - x[1]}   # R <= 85
+    ]
+    return minimize(total_cost, initial_guess, method='SLSQP', constraints=constraints)
+
+# Get the true minimum
+C_true, R_true, T_true = true_minimum()
+
+# Generate 50 samples
+C_samples, R_samples = generate_samples(50)
+
+# Evaluate the initial samples
+T_values = evaluate_samples(C_samples, R_samples)
+
+# Identify the best points (lowest cost)
+best_indices = np.argsort(T_values)[:5]  # Get indices of the 5 best points
+best_C_samples = C_samples[best_indices]
+best_R_samples = R_samples[best_indices]
+
+# Print the true minimum
+print(f"True Minimum: C={C_true:.2f}, R={R_true:.2f}, T={T_true:.2f}")
+
+# Optimize using the best sampled points in parallel
+results = Parallel(n_jobs=-1)(delayed(optimize_from_initial_guess)([C_init, R_init]) for C_init, R_init in zip(best_C_samples, best_R_samples))
+
+# Print results from parallel optimizations
+for res in results:
+    print(f"Optimal Cost (C): {res.x[0]:.2f}, Optimal Risk (R): {res.x[1]:.2f}, Minimum Total Cost (T): {res.fun:.2f}")
+
+# Visualize the results
+C_grid = np.linspace(C_range[0], C_range[1], 100)
+R_grid = np.linspace(R_range[0], R_range[1], 100)
+C_mesh, R_mesh = np.meshgrid(C_grid, R_grid)
+T_mesh = np.zeros_like(C_mesh)
+
+for i in range(C_mesh.shape[0]):
+    for j in range(C_mesh.shape[1]):
+        T_mesh[i, j] = total_cost([C_mesh[i, j], R_mesh[i, j]])
+
+plt.figure(figsize=(10, 8))
+contour = plt.contour(C_mesh, R_mesh, T_mesh, levels=20)
+plt.clabel(contour, inline=True, fontsize=8)
+plt.plot(results[0].x[0], results[0].x[1], 'r*', markersize=15, label='Optimal Point')
+plt.xlabel('Cost (C)')
+plt.ylabel('Risk (R)')
+plt.title('Total Cost Optimization Contour Plot')
+plt.colorbar(label='Total Cost (T)')
+plt.legend()
+plt.grid(True)
+plt.show()

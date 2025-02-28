@@ -1,0 +1,130 @@
+import numpy as np
+from scipy.optimize import minimize
+import matplotlib.pyplot as plt
+
+# Define the ranges for C and R
+C_range = (375, 425)
+R_range = (75, 85)
+
+# Generate sample data points within the ranges
+np.random.seed(42)  # For reproducibility
+n_samples = 50
+C_samples = np.random.uniform(C_range[0], C_range[1], n_samples)
+R_samples = np.random.uniform(R_range[0], R_range[1], n_samples)
+
+# Define the total cost function T
+def total_cost(x):
+    C, R = x
+    # Assuming a quadratic relationship between C, R and T
+    # T = aC^2 + bR^2 + cCR + dC + eR + f
+    # Coefficients chosen for demonstration
+    a, b, c, d, e, f = 0.01, 0.02, 0.015, -5, -3, 1000
+    return a*C**2 + b*R**2 + c*C*R + d*C + e*R + f
+
+# Define constraints
+constraints = [
+    {'type': 'ineq', 'fun': lambda x: x[0] - C_range[0]},  # C >= 375
+    {'type': 'ineq', 'fun': lambda x: C_range[1] - x[0]},  # C <= 425
+    {'type': 'ineq', 'fun': lambda x: x[1] - R_range[0]},  # R >= 75
+    {'type': 'ineq', 'fun': lambda x: R_range[1] - x[1]}   # R <= 85
+]
+
+# Initial guess
+x0 = [400, 80]  # Middle of ranges
+
+# Optimize the total cost function
+result = minimize(total_cost, x0, method='SLSQP', constraints=constraints)
+
+# Print results
+print("\nOptimization Results:")
+print(f"Optimal Cost (C): {result.x[0]:.2f}")
+print(f"Optimal Risk (R): {result.x[1]:.2f}")
+print(f"Minimum Total Cost (T): {result.fun:.2f}")
+
+# Visualize the results
+C_grid = np.linspace(C_range[0], C_range[1], 100)
+R_grid = np.linspace(R_range[0], R_range[1], 100)
+C_mesh, R_mesh = np.meshgrid(C_grid, R_grid)
+T_mesh = np.zeros_like(C_mesh)
+
+for i in range(C_mesh.shape[0]):
+    for j in range(C_mesh.shape[1]):
+        T_mesh[i,j] = total_cost([C_mesh[i,j], R_mesh[i,j]])
+
+plt.figure(figsize=(10, 8))
+contour = plt.contour(C_mesh, R_mesh, T_mesh, levels=20)
+plt.clabel(contour, inline=True, fontsize=8)
+plt.plot(result.x[0], result.x[1], 'r*', markersize=15, label='Optimal Point')
+plt.xlabel('Cost (C)')
+plt.ylabel('Risk (R)')
+plt.title('Total Cost Optimization Contour Plot')
+plt.colorbar(label='Total Cost (T)')
+plt.legend()
+plt.grid(True)
+plt.show()
+# Define coefficients as parameters that can be easily modified
+coefficients = {
+    'a': 0.01,  # Coefficient for C^2
+    'b': 0.02,  # Coefficient for R^2
+    'c': 0.015, # Coefficient for CR
+    'd': -5,    # Coefficient for C
+    'e': -3,    # Coefficient for R
+    'f': 1000   # Constant term
+}
+
+def total_cost_with_params(x, coef):
+    """
+    Calculate total cost using quadratic relationship with configurable coefficients.
+    
+    Args:
+        x (list): List containing Cost (C) and Risk (R) values
+        coef (dict): Dictionary containing coefficients a, b, c, d, e, f
+        
+    Returns:
+        float: Total cost value
+    """
+    C, R = x
+    return (coef['a']*C**2 + coef['b']*R**2 + coef['c']*C*R + 
+            coef['d']*C + coef['e']*R + coef['f'])
+
+# Try different optimization methods
+optimization_methods = ['SLSQP', 'trust-constr', 'COBYLA']
+results = {}
+
+for method in optimization_methods:
+    try:
+        result = minimize(
+            lambda x: total_cost_with_params(x, coefficients),
+            x0,
+            method=method,
+            constraints=constraints
+        )
+        
+        if result.success:
+            results[method] = {
+                'C': result.x[0],
+                'R': result.x[1],
+                'cost': result.fun,
+                'iterations': result.nit,
+                'success': result.success
+            }
+        else:
+            print(f"Warning: {method} optimization did not converge. Message: {result.message}")
+            
+    except Exception as e:
+        print(f"Error occurred with {method}: {str(e)}")
+
+# Print comparison of different methods
+print("\nComparison of Optimization Methods:")
+for method, res in results.items():
+    print(f"\n{method}:")
+    print(f"  Optimal Cost (C): {res['C']:.2f}")
+    print(f"  Optimal Risk (R): {res['R']:.2f}")
+    print(f"  Minimum Total Cost (T): {res['cost']:.2f}")
+    print(f"  Iterations: {res['iterations']}")
+
+# Use the best result (minimum cost) for visualization
+best_method = min(results.items(), key=lambda x: x[1]['cost'])[0]
+result = SimpleNamespace(**results[best_method])
+result.x = [results[best_method]['C'], results[best_method]['R']]
+result.fun = results[best_method]['cost']
